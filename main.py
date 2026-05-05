@@ -33,10 +33,14 @@ def get_token():
     }
 
     res = requests.post(url, headers=headers, data=data)
-    res.raise_for_status()
 
-    return res.json()["access_token"]
+    print("TOKEN STATUS:", res.status_code)
+    print("TOKEN RESPONSE:", res.text)   # 🔥 THIS is key
 
+    try:
+        return res.json()["access_token"]
+    except Exception:
+        raise Exception("Token request failed (see response above)")
 
 # ---------------------------
 # SHEET LOGGING
@@ -105,13 +109,16 @@ def get_items(token):
             "sort": "newlyListed"
         }
 
-        res = requests.get(url, headers=headers, params=params)
+       res = requests.get(url, headers=headers, params=params)
 
-        try:
-            data = res.json()
-        except:
-            print("Bad response for:", q)
-            continue
+print("SEARCH STATUS:", res.status_code)
+print("SEARCH RAW:", res.text[:200])  # debug first 200 chars
+
+try:
+    data = res.json()
+except Exception:
+    print("JSON FAILED FOR QUERY:", q)
+    continue
 
         all_items.extend(data.get("itemSummaries", []))
 
