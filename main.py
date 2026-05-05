@@ -51,6 +51,15 @@ def get_token():
         print("❌ BAD JSON RESPONSE:", res.text)
         raise
 
+def safe_json(res, label=""):
+    print(f"\n[{label}] STATUS:", res.status_code)
+    print(f"[{label}] RAW:", res.text[:300])
+
+    try:
+        return res.json()
+    except Exception:
+        print(f"❌ JSON FAILED FOR {label}")
+        return None
 # ---------------------------
 # GOOGLE SHEETS
 # ---------------------------
@@ -110,8 +119,11 @@ def get_items(token):
             "sort": "newlyListed"
         }
 
-        res = requests.get(url, headers=headers, params=params)
+       res = requests.get(url, headers=headers, params=params)
+data = safe_json(res, f"SEARCH:{q}")
 
+if not data:
+    continue
         # 🔥 CRITICAL DEBUG
         print("\n--- REQUEST DEBUG ---")
         print("QUERY:", q)
@@ -173,7 +185,10 @@ def estimate_price(token, keyword):
     res = requests.get(url, headers=headers, params=params)
 
     try:
-        data = res.json()
+        data = safe_json(res, "SOLD_COMPS")
+
+if not data:
+    return None
     except:
         return None
 
