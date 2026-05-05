@@ -98,7 +98,6 @@ def get_items(token):
 
         headers = {
             "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
             "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
         }
 
@@ -110,23 +109,25 @@ def get_items(token):
 
         res = requests.get(url, headers=headers, params=params)
 
-        # 🔥 STEP 1: always debug first
-        if res.status_code != 200:
-            print("\nEBAY ERROR:", q)
-            print("STATUS:", res.status_code)
-            print("BODY:", res.text[:300])
+        # 🔥 CRITICAL DEBUG
+        print("\n--- REQUEST DEBUG ---")
+        print("QUERY:", q)
+        print("STATUS:", res.status_code)
+        print("HEADERS:", res.headers.get("Content-Type"))
+        print("BODY (first 300 chars):", res.text[:300])
+
+        # ❌ NEVER crash here again
+        if "json" not in str(res.headers.get("Content-Type", "")):
+            print("❌ NON-JSON RESPONSE, skipping")
             continue
 
-        # 🔥 STEP 2: safe JSON parsing
         try:
             data = res.json()
-        except Exception:
-            print("\nJSON FAIL:", q)
-            print("RAW RESPONSE:", res.text[:300])
+        except Exception as e:
+            print("JSON PARSE FAILED:", e)
             continue
 
-        items = data.get("itemSummaries", [])
-        all_items.extend(items)
+        all_items.extend(data.get("itemSummaries", []))
 
     return all_items
 
