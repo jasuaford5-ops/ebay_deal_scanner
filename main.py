@@ -97,6 +97,8 @@ def detect_niche(title):
     return "general"
 
 def get_sold_price_estimate(token, niche, keyword):
+    import statistics
+
     url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
 
     headers = {
@@ -104,9 +106,9 @@ def get_sold_price_estimate(token, niche, keyword):
     }
 
     params = {
-        "q": f"{keyword}",
-        "filter": "buyingOptions:{AUCTION|FIXED_PRICE},sold:true",
-        "limit": 10
+        "q": keyword,
+        "limit": 20,
+        "filter": "buyingOptions:{FIXED_PRICE}"
     }
 
     res = requests.get(url, headers=headers, params=params)
@@ -120,16 +122,25 @@ def get_sold_price_estimate(token, niche, keyword):
 
     for item in data.get("itemSummaries", []):
         price = item.get("price", {}).get("value")
-        if price:
-            try:
-                prices.append(float(price))
-            except:
-                pass
 
-    if not prices:
+        try:
+            price = float(price)
+            if price > 0:
+                prices.append(price)
+        except:
+            pass
+
+    if len(prices) < 3:
         return None
 
-    return sum(prices) / len(prices)
+    # 🧠 remove outliers (important)
+    prices.sort()
+    trimmed = prices[1:-1]  # removes lowest + highest
+
+    if not trimmed:
+        return statistics.median(prices)
+
+    return statistics.median(trimmed)
 # ---------------------------
 # DEAL ENGINE (PHASE 1)
 # ---------------------------
