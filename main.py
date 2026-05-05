@@ -97,7 +97,9 @@ def get_items(token):
         url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
 
         headers = {
-            "Authorization": f"Bearer {token}"
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
         }
 
         params = {
@@ -108,19 +110,23 @@ def get_items(token):
 
         res = requests.get(url, headers=headers, params=params)
 
+        # 🔥 STEP 1: always debug first
         if res.status_code != 200:
-            print("eBay error:", q, res.status_code)
-            print(res.text[:200])
+            print("\nEBAY ERROR:", q)
+            print("STATUS:", res.status_code)
+            print("BODY:", res.text[:300])
             continue
 
+        # 🔥 STEP 2: safe JSON parsing
         try:
             data = res.json()
         except Exception:
-            print("JSON parse fail:", q)
-            print(res.text[:200])
+            print("\nJSON FAIL:", q)
+            print("RAW RESPONSE:", res.text[:300])
             continue
 
-        all_items.extend(data.get("itemSummaries", []))
+        items = data.get("itemSummaries", [])
+        all_items.extend(items)
 
     return all_items
 
