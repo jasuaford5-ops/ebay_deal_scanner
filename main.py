@@ -31,6 +31,9 @@ def get_token():
     client_id = os.getenv("EBAY_CLIENT_ID")
     client_secret = os.getenv("EBAY_CLIENT_SECRET")
 
+    if not client_id or not client_secret:
+        raise Exception("Missing eBay credentials")
+
     creds = f"{client_id}:{client_secret}"
     encoded = base64.b64encode(creds.encode()).decode()
 
@@ -48,23 +51,29 @@ def get_token():
 
     res = requests.post(url, headers=headers, data=data, timeout=20)
 
-    print("TOKEN STATUS:", res.status_code)
-
     data = safe_request_json(res, "TOKEN")
 
-    if not data:
-        raise Exception("Token failed")
+    if not data or "access_token" not in data:
+        raise Exception("Token request failed")
 
-    return data.get("access_token")
+    return data["access_token"]
 
 
 # ---------------------------
-# SHEETS
+# GOOGLE SHEETS (BASE64 FIX)
 # ---------------------------
 def connect_sheet():
-    creds_json = os.getenv("GOOGLE_CREDS_JSON")
+    creds_b64 = os.getenv("GOOGLE_CREDS_B64")
 
-    creds_dict = json.loads(creds_json)
+    if not creds_b64:
+        raise Exception("Missing GOOGLE_CREDS_B64")
+
+    try:
+        decoded = base64.b64decode(creds_b64).decode()
+        creds_dict = json.loads(decoded)
+    except Exception as e:
+        print("❌ BAD GOOGLE CREDS")
+        raise e
 
     scope = [
         "https://spreadsheets.google.com/feeds",
@@ -111,14 +120,17 @@ def get_items(token):
             "sort": "newlyListed"
         }
 
-        res = requests.get(url, headers=headers, params=params, timeout=20)
+        try:
+            res = requests.get(url, headers=headers, params=params, timeout=20)
+            data = safe_request_json(res, f"SEARCH {q}")
 
-        data = safe_request_json(res, f"SEARCH {q}")
+            if data and "itemSummaries" in data:
+                all_items.extend(data["itemSummaries"])
 
-        if not data:
-            continue
+        except Exception as e:
+            print(f"SEARCH ERROR ({q}):", str(e))
 
-        all_items.extend(data.get("itemSummaries", []))
+        time.sleep(1)  # rate limit
 
     return all_items
 
@@ -139,30 +151,34 @@ def estimate_price(token, keyword):
         "limit": 20
     }
 
-    res = requests.get(url, headers=headers, params=params, timeout=20)
+    try:
+        res = requests.get(url, headers=headers, params=params, timeout=20)
+        data = safe_request_json(res, "COMPS")
 
-    data = safe_request_json(res, "COMPS")
+        if not data:
+            return None
 
-    if not data:
+        prices = []
+
+        for item in data.get("itemSummaries", []):
+            try:
+                price = float(item.get("price", {}).get("value", 0))
+                if price > 0:
+                    prices.append(price)
+            except:
+                pass
+
+        if len(prices) < 3:
+            return None
+
+        prices.sort()
+        trimmed = prices[1:-1]
+
+        return sum(trimmed) / len(trimmed) if trimmed else sum(prices) / len(prices)
+
+    except Exception as e:
+        print("COMP ERROR:", str(e))
         return None
-
-    prices = []
-
-    for item in data.get("itemSummaries", []):
-        try:
-            price = float(item.get("price", {}).get("value", 0))
-            if price > 0:
-                prices.append(price)
-        except:
-            pass
-
-    if len(prices) < 3:
-        return None
-
-    prices.sort()
-    trimmed = prices[1:-1]
-
-    return sum(trimmed) / len(trimmed) if trimmed else sum(prices) / len(prices)
 
 
 # ---------------------------
@@ -172,7 +188,10 @@ def evaluate(price, comp):
     if not comp:
         return None
 
-    price = float(price)
+    try:
+        price = float(price)
+    except:
+        return None
 
     fees = comp * 0.13
     shipping = 10
@@ -193,7 +212,7 @@ def evaluate(price, comp):
 # ---------------------------
 def run():
     print("\n========================")
-    print("NEW SCAN RUN")
+    print("NEW SCAN RUN", datetime.now())
     print("========================")
 
     try:
@@ -204,36 +223,40 @@ def run():
         print("ITEMS FOUND:", len(items))
 
         for item in items:
-            title = item.get("title")
-            price = item.get("price", {}).get("value")
-            url = item.get("itemWebUrl")
+            try:
+                title = item.get("title")
+                price = item.get("price", {}).get("value")
+                url = item.get("itemWebUrl")
 
-            if not title or not price:
-                continue
+                if not title or not price:
+                    continue
 
-            comp = estimate_price(token, title)
-            result = evaluate(price, comp)
+                comp = estimate_price(token, title)
+                result = evaluate(price, comp)
 
-            if not result:
-                continue
+                if not result:
+                    continue
 
-            profit, pct, decision = result
+                profit, pct, decision = result
 
-            if BUY_ONLY and decision != "BUY":
-                continue
+                if BUY_ONLY and decision != "BUY":
+                    continue
 
-            print(title, decision, profit)
+                print(f"{decision}: {title} | Profit: ${round(profit,2)}")
 
-            sheet.append_row([
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                title,
-                price,
-                comp,
-                profit,
-                pct,
-                decision,
-                url
-            ])
+                sheet.append_row([
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    title,
+                    price,
+                    comp,
+                    profit,
+                    pct,
+                    decision,
+                    url
+                ])
+
+            except Exception as e:
+                print("ITEM ERROR:", str(e))
 
     except Exception as e:
         print("🔥 CRASH:", type(e).__name__, str(e))
@@ -244,4 +267,5 @@ def run():
 # ---------------------------
 while True:
     run()
+    print("Sleeping 5 minutes...\n")
     time.sleep(300)
