@@ -7,7 +7,6 @@ from datetime import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-
 BUY_ONLY = True
 
 
@@ -39,32 +38,30 @@ def get_token():
     res = requests.post(url, headers=headers, data=data)
 
     print("TOKEN STATUS:", res.status_code)
-    print("TOKEN RAW:", res.text)
+    print("TOKEN RAW:", res.text[:300])
 
-    # 🧠 SAFETY CHECK (IMPORTANT)
     if res.status_code != 200:
         raise Exception("Token failed")
 
-    try:
-        return res.json().get("access_token")
-    except Exception:
-        print("❌ BAD JSON RESPONSE:", res.text)
-        raise
+    return res.json().get("access_token")
+
 
 def safe_json(res, label=""):
     print(f"\n[{label}] STATUS:", res.status_code)
-    print(f"[{label}] RAW:", res.text[:300])
+    print(f"[{label}] RAW:", res.text[:200])
 
     try:
         return res.json()
-    except Exception:
-        print(f"❌ JSON FAILED FOR {label}")
+    except:
         return None
+
+
 # ---------------------------
-# GOOGLE SHEETS
+# SHEET
 # ---------------------------
 def connect_sheet():
     creds_json = os.getenv("GOOGLE_CREDS_JSON")
+
     if not creds_json:
         raise Exception("Missing GOOGLE_CREDS_JSON")
 
@@ -82,21 +79,17 @@ def connect_sheet():
     return client.open("resale deal finder").sheet1
 
 
-def log_to_sheet(sheet, row):
-    sheet.append_row(row)
-
-
 # ---------------------------
 # EBAY SEARCH
 # ---------------------------
 def get_items(token):
     queries = [
         "nike tech fleece hoodie",
-        "carhartt jacket active",
-        "stussy tee vintage",
-        "arcteryx atom lt jacket",
-        "north face nuptse 700",
-        "adidas samba og",
+        "carhartt jacket",
+        "stussy tee",
+        "arcteryx atom lt",
+        "north face nuptse",
+        "adidas samba",
         "new balance 1906r",
         "asics gel 1130",
         "sp5der hoodie",
@@ -119,27 +112,11 @@ def get_items(token):
             "sort": "newlyListed"
         }
 
-       res = requests.get(url, headers=headers, params=params)
-data = safe_json(res, f"SEARCH:{q}")
+        res = requests.get(url, headers=headers, params=params)
 
-if not data:
-    continue
-        # 🔥 CRITICAL DEBUG
-        print("\n--- REQUEST DEBUG ---")
-        print("QUERY:", q)
-        print("STATUS:", res.status_code)
-        print("HEADERS:", res.headers.get("Content-Type"))
-        print("BODY (first 300 chars):", res.text[:300])
+        data = safe_json(res, f"SEARCH:{q}")
 
-        # ❌ NEVER crash here again
-        if "json" not in str(res.headers.get("Content-Type", "")):
-            print("❌ NON-JSON RESPONSE, skipping")
-            continue
-
-        try:
-            data = res.json()
-        except Exception as e:
-            print("JSON PARSE FAILED:", e)
+        if not data:
             continue
 
         all_items.extend(data.get("itemSummaries", []))
@@ -148,33 +125,14 @@ if not data:
 
 
 # ---------------------------
-# NICHE DETECTION
-# ---------------------------
-def detect_niche(title):
-    title = title.lower()
-
-    if any(x in title for x in ["hoodie", "fleece", "crewneck"]):
-        return "hoodie"
-    if any(x in title for x in ["jacket", "coat", "nuptse", "arcteryx"]):
-        return "jacket"
-    if any(x in title for x in ["sneaker", "nike", "adidas", "new balance", "asics", "samba"]):
-        return "sneaker"
-    if any(x in title for x in ["tee", "shirt", "stussy"]):
-        return "shirt"
-    if any(x in title for x in ["sunglasses", "oakley"]):
-        return "accessory"
-
-    return "general"
-
-
-# ---------------------------
-# COMP ESTIMATE (simple median fallback)
+# COMP ESTIMATE
 # ---------------------------
 def estimate_price(token, keyword):
     url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
 
     headers = {
-        "Authorization": f"Bearer {token}"
+        "Authorization": f"Bearer {token}",
+        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
     }
 
     params = {
@@ -184,12 +142,9 @@ def estimate_price(token, keyword):
 
     res = requests.get(url, headers=headers, params=params)
 
-    try:
-        data = safe_json(res, "SOLD_COMPS")
+    data = safe_json(res, "COMPS")
 
-if not data:
-    return None
-    except:
+    if not data:
         return None
 
     prices = []
@@ -242,18 +197,45 @@ def run():
         print("\n--- SCANNING ---")
 
         token = get_token()
-        print("TOKEN OK")
-
         sheet = connect_sheet()
-        print("SHEET CONNECTED")
 
         items = get_items(token)
-        print("ITEMS FETCHED:", len(items))
+        print("ITEMS:", len(items))
+
+        for item in items:
+            title = item.get("title")
+            price = item.get("price", {}).get("value")
+            url = item.get("itemWebUrl")
+
+            if not title or not price:
+                continue
+
+            comp = estimate_price(token, title)
+            result = evaluate(price, comp)
+
+            if not result:
+                continue
+
+            profit, pct, decision = result
+
+            if BUY_ONLY and decision != "BUY":
+                continue
+
+            print(title, decision, profit)
+
+            sheet.append_row([
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                title,
+                price,
+                comp,
+                profit,
+                pct,
+                decision,
+                url
+            ])
 
     except Exception as e:
-        print("\n🔥 FULL CRASH ERROR:")
-        print(type(e).__name__)
-        print(str(e))
+        print("ERROR:", type(e).__name__, str(e))
 
 
 # ---------------------------
