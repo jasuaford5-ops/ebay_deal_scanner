@@ -11,14 +11,25 @@ BUY_ONLY = True
 
 
 # ---------------------------
+# SAFE JSON WRAPPER
+# ---------------------------
+def safe_request_json(res, label):
+    print(f"\n[{label}] STATUS:", res.status_code)
+    print(f"[{label}] TEXT:", res.text[:200])
+
+    try:
+        return res.json()
+    except Exception:
+        print(f"❌ NON-JSON RESPONSE: {label}")
+        return None
+
+
+# ---------------------------
 # EBAY AUTH
 # ---------------------------
 def get_token():
     client_id = os.getenv("EBAY_CLIENT_ID")
     client_secret = os.getenv("EBAY_CLIENT_SECRET")
-
-    if not client_id or not client_secret:
-        raise Exception("Missing eBay credentials")
 
     creds = f"{client_id}:{client_secret}"
     encoded = base64.b64encode(creds.encode()).decode()
@@ -35,35 +46,23 @@ def get_token():
         "scope": "https://api.ebay.com/oauth/api_scope"
     }
 
-    res = requests.post(url, headers=headers, data=data)
+    res = requests.post(url, headers=headers, data=data, timeout=20)
 
     print("TOKEN STATUS:", res.status_code)
-    print("TOKEN RAW:", res.text[:300])
 
-    if res.status_code != 200:
+    data = safe_request_json(res, "TOKEN")
+
+    if not data:
         raise Exception("Token failed")
 
-    return res.json().get("access_token")
-
-
-def safe_json(res, label=""):
-    print(f"\n[{label}] STATUS:", res.status_code)
-    print(f"[{label}] RAW:", res.text[:200])
-
-    try:
-        return res.json()
-    except:
-        return None
+    return data.get("access_token")
 
 
 # ---------------------------
-# SHEET
+# SHEETS
 # ---------------------------
 def connect_sheet():
     creds_json = os.getenv("GOOGLE_CREDS_JSON")
-
-    if not creds_json:
-        raise Exception("Missing GOOGLE_CREDS_JSON")
 
     creds_dict = json.loads(creds_json)
 
@@ -112,9 +111,9 @@ def get_items(token):
             "sort": "newlyListed"
         }
 
-        res = requests.get(url, headers=headers, params=params)
+        res = requests.get(url, headers=headers, params=params, timeout=20)
 
-        data = safe_json(res, f"SEARCH:{q}")
+        data = safe_request_json(res, f"SEARCH {q}")
 
         if not data:
             continue
@@ -140,9 +139,9 @@ def estimate_price(token, keyword):
         "limit": 20
     }
 
-    res = requests.get(url, headers=headers, params=params)
+    res = requests.get(url, headers=headers, params=params, timeout=20)
 
-    data = safe_json(res, "COMPS")
+    data = safe_request_json(res, "COMPS")
 
     if not data:
         return None
@@ -193,14 +192,16 @@ def evaluate(price, comp):
 # MAIN LOOP
 # ---------------------------
 def run():
-    try:
-        print("\n--- SCANNING ---")
+    print("\n========================")
+    print("NEW SCAN RUN")
+    print("========================")
 
+    try:
         token = get_token()
         sheet = connect_sheet()
 
         items = get_items(token)
-        print("ITEMS:", len(items))
+        print("ITEMS FOUND:", len(items))
 
         for item in items:
             title = item.get("title")
@@ -235,7 +236,7 @@ def run():
             ])
 
     except Exception as e:
-        print("ERROR:", type(e).__name__, str(e))
+        print("🔥 CRASH:", type(e).__name__, str(e))
 
 
 # ---------------------------
