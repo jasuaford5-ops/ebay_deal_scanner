@@ -109,21 +109,17 @@ def get_items(token):
             "sort": "newlyListed"
         }
 
-       res = requests.get(url, headers=headers, params=params)
+        res = requests.get(url, headers=headers, params=params)
 
-print("SEARCH STATUS:", res.status_code)
-print("SEARCH RAW:", res.text[:200])  # debug first 200 chars
-
-try:
-    data = res.json()
-except Exception:
-    print("JSON FAILED FOR QUERY:", q)
-    continue
+        try:
+            data = res.json()
+        except:
+            print("Bad response for:", q)
+            continue
 
         all_items.extend(data.get("itemSummaries", []))
 
     return {"itemSummaries": all_items}
-
 
 # ---------------------------
 # NICHE DETECTION
