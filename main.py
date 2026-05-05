@@ -172,33 +172,40 @@ def run():
 
         items = data.get("itemSummaries", [])
 
-        print("TOTAL ITEMS:", len(items))
+        seen = set()
 
         for item in items:
-    title = item.get("title")
-    price = item.get("price", {}).get("value")
-    url = item.get("itemWebUrl")
+            title = item.get("title")
+            price = item.get("price", {}).get("value")
+            url = item.get("itemWebUrl")
 
-    niche = detect_niche(title)
+            if not title or not price:
+                continue
 
-    sold_price = get_sold_price_estimate(token, niche, title)
+            # prevent duplicate spam
+            if title in seen:
+                continue
+            seen.add(title)
 
-    result = evaluate_deal(price, sold_price)
+            niche = detect_niche(title)
+            sold_price = get_sold_price_estimate(token, niche, title)
 
-    if not result:
-        continue
+            result = evaluate_deal(price, sold_price)
 
-    net_profit, profit_percent, label = result
+            if not result:
+                continue
 
-    print("\n--------------------")
-    print("TITLE:", title)
-    print("NICHE:", niche)
-    print("BUY PRICE:", price)
-    print("SOLD AVG:", sold_price)
-    print("PROFIT:", round(net_profit, 2))
-    print("PROFIT %:", round(profit_percent, 2))
-    print("DECISION:", label)
-    print(url)
+            net_profit, profit_percent, label = result
+
+            print("\n--------------------")
+            print("ITEM:", title)
+            print("NICHE:", niche)
+            print("BUY PRICE:", price)
+            print("SOLD AVG:", round(sold_price, 2) if sold_price else None)
+            print("NET PROFIT:", round(net_profit, 2))
+            print("PROFIT %:", round(profit_percent, 2))
+            print("DECISION:", label)
+            print("LINK:", url)
 
     except Exception as e:
         print("ERROR:", e)
