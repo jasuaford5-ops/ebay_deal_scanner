@@ -224,56 +224,18 @@ def run():
         print("\n--- SCANNING ---")
 
         token = get_token()
+        print("TOKEN OK")
+
         sheet = connect_sheet()
+        print("SHEET CONNECTED")
 
         items = get_items(token)
-
-        seen = set()
-
-        for item in items:
-            title = item.get("title")
-            price = item.get("price", {}).get("value")
-            url = item.get("itemWebUrl")
-
-            if not title or not price:
-                continue
-
-            if title in seen:
-                continue
-            seen.add(title)
-
-            niche = detect_niche(title)
-            comp = estimate_price(token, title)
-
-            result = evaluate(price, comp)
-            if not result:
-                continue
-
-            profit, profit_pct, decision = result
-
-            if BUY_ONLY and decision != "BUY":
-                continue
-
-            row = [
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                title,
-                niche,
-                price,
-                comp,
-                profit,
-                profit_pct,
-                decision,
-                url
-            ]
-
-            log_to_sheet(sheet, row)
-
-            print("ITEM:", title)
-            print("DECISION:", decision, "PROFIT:", profit)
-            print("--------------------")
+        print("ITEMS FETCHED:", len(items))
 
     except Exception as e:
-        print("ERROR:", e)
+        print("\n🔥 FULL CRASH ERROR:")
+        print(type(e).__name__)
+        print(str(e))
 
 
 # ---------------------------
