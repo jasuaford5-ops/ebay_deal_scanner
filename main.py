@@ -2,8 +2,6 @@ import requests
 import base64
 import os
 import time
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 import json
 from datetime import datetime
 
@@ -16,7 +14,7 @@ def get_token():
     client_secret = os.getenv("EBAY_CLIENT_SECRET")
 
     if not client_id or not client_secret:
-        raise Exception("Missing eBay API keys")
+        raise Exception("Missing eBay credentials")
 
     creds = f"{client_id}:{client_secret}"
     encoded = base64.b64encode(creds.encode()).decode()
@@ -34,13 +32,20 @@ def get_token():
     }
 
     res = requests.post(url, headers=headers, data=data)
-    res.raise_for_status()
 
-    return res.json()["access_token"]
+    print("TOKEN STATUS:", res.status_code)
+
+    try:
+        token_data = res.json()
+    except Exception:
+        print("TOKEN RAW RESPONSE:", res.text)
+        raise
+
+    return token_data["access_token"]
 
 
 # ---------------------------
-# EBAY SEARCH
+# SEARCH QUERIES
 # ---------------------------
 def get_items(token):
     queries = [
@@ -54,9 +59,9 @@ def get_items(token):
         "asics gel 1130",
         "sp5der hoodie",
         "denim tears hoodie",
-        "oakley sunglasses sutro",
+        "oakley sutro sunglasses",
         "gymshark compression shirt",
-        "birkensock stussy sandals"
+        "birkenstock stussy sandals"
     ]
 
     all_items = []
@@ -75,31 +80,21 @@ def get_items(token):
         }
 
         res = requests.get(url, headers=headers, params=params)
-        res.raise_for_status()
 
-        data = res.json()
-        all_items.extend(data.get("itemSummaries", []))
+        print(f"\nQUERY: {q}")
+        print("STATUS:", res.status_code)
+
+        # SAFE JSON HANDLING (prevents your crash)
+        try:
+            data = res.json()
+        except Exception:
+            print("RAW RESPONSE:", res.text[:300])
+            continue
+
+        items = data.get("itemSummaries", [])
+        all_items.extend(items)
 
     return {"itemSummaries": all_items}
-
-
-# ---------------------------
-# GOOGLE SHEETS CONNECT
-# ---------------------------
-def connect_sheet():
-    creds_dict = json.loads(os.getenv("GOOGLE_CREDS_JSON"))
-
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive"
-    ]
-
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    client = gspread.authorize(creds)
-
-    sheet_name = os.getenv("SHEET_NAME")
-
-    return client.open(sheet_name).sheet1
 
 
 # ---------------------------
@@ -111,26 +106,17 @@ def run():
 
         token = get_token()
         data = get_items(token)
-        sheet = connect_sheet()
 
         items = data.get("itemSummaries", [])
+
+        print("\nTOTAL ITEMS:", len(items))
 
         for item in items:
             title = item.get("title")
             price = item.get("price", {}).get("value")
             url = item.get("itemWebUrl")
-            item_id = item.get("itemId")
 
-            row = [
-                title,
-                price,
-                url,
-                item_id,
-                datetime.now().isoformat()
-            ]
-
-            sheet.append_row(row)
-            print("Added:", title)
+            print(title, "-", price)
 
     except Exception as e:
         print("ERROR:", e)
