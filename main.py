@@ -80,18 +80,69 @@ def get_items(token):
 
     return {"itemSummaries": all_items}
 
+def detect_niche(title):
+    title = title.lower()
 
+    if any(x in title for x in ["hoodie", "fleece", "crewneck"]):
+        return "hoodie"
+    if any(x in title for x in ["jacket", "coat", "nuptse", "arcteryx"]):
+        return "jacket"
+    if any(x in title for x in ["sneaker", "nike", "adidas", "new balance", "asics", "samba"]):
+        return "sneaker"
+    if any(x in title for x in ["tee", "shirt", "stussy"]):
+        return "shirt"
+    if any(x in title for x in ["sunglasses", "oakley"]):
+        return "accessory"
+
+    return "general"
+
+def get_sold_price_estimate(token, niche, keyword):
+    url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    params = {
+        "q": f"{keyword}",
+        "filter": "buyingOptions:{AUCTION|FIXED_PRICE},sold:true",
+        "limit": 10
+    }
+
+    res = requests.get(url, headers=headers, params=params)
+
+    try:
+        data = res.json()
+    except:
+        return None
+
+    prices = []
+
+    for item in data.get("itemSummaries", []):
+        price = item.get("price", {}).get("value")
+        if price:
+            try:
+                prices.append(float(price))
+            except:
+                pass
+
+    if not prices:
+        return None
+
+    return sum(prices) / len(prices)
 # ---------------------------
 # DEAL ENGINE (PHASE 1)
 # ---------------------------
-def evaluate_deal(price):
+def evaluate_deal(price, sold_price):
     try:
         price = float(price)
     except:
         return None
 
-    # temporary resale estimate (we replace later with sold comps)
-    resale_estimate = price * 1.8
+    if not sold_price:
+        return None
+
+    resale_estimate = sold_price
 
     fees = resale_estimate * 0.13
     shipping = 10
@@ -99,7 +150,7 @@ def evaluate_deal(price):
     net_profit = resale_estimate - price - fees - shipping
     profit_percent = (net_profit / price) * 100 if price > 0 else 0
 
-    if net_profit >= 25 and profit_percent > 25:
+    if net_profit >= 30 and profit_percent > 25:
         label = "BUY"
     elif net_profit >= 10:
         label = "RISK"
@@ -124,24 +175,30 @@ def run():
         print("TOTAL ITEMS:", len(items))
 
         for item in items:
-            title = item.get("title")
-            price = item.get("price", {}).get("value")
-            url = item.get("itemWebUrl")
+    title = item.get("title")
+    price = item.get("price", {}).get("value")
+    url = item.get("itemWebUrl")
 
-            result = evaluate_deal(price)
+    niche = detect_niche(title)
 
-            if not result:
-                continue
+    sold_price = get_sold_price_estimate(token, niche, title)
 
-            net_profit, profit_percent, label = result
+    result = evaluate_deal(price, sold_price)
 
-            print("\n--------------------")
-            print("ITEM:", title)
-            print("PRICE:", price)
-            print("PROFIT:", round(net_profit, 2))
-            print("PROFIT %:", round(profit_percent, 2))
-            print("DECISION:", label)
-            print(url)
+    if not result:
+        continue
+
+    net_profit, profit_percent, label = result
+
+    print("\n--------------------")
+    print("TITLE:", title)
+    print("NICHE:", niche)
+    print("BUY PRICE:", price)
+    print("SOLD AVG:", sold_price)
+    print("PROFIT:", round(net_profit, 2))
+    print("PROFIT %:", round(profit_percent, 2))
+    print("DECISION:", label)
+    print(url)
 
     except Exception as e:
         print("ERROR:", e)
