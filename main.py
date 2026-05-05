@@ -7,6 +7,7 @@ from datetime import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
+
 BUY_ONLY = True
 
 
@@ -16,6 +17,9 @@ BUY_ONLY = True
 def get_token():
     client_id = os.getenv("EBAY_CLIENT_ID")
     client_secret = os.getenv("EBAY_CLIENT_SECRET")
+
+    if not client_id or not client_secret:
+        raise Exception("Missing EBAY credentials")
 
     creds = f"{client_id}:{client_secret}"
     encoded = base64.b64encode(creds.encode()).decode()
@@ -29,56 +33,49 @@ def get_token():
 
     data = {
         "grant_type": "client_credentials",
-        "scope": "https://api.ebay.com/oauth/api_scope"
+        "scope": "https://api.ebay.com/oauth/api_scope/buy.browse"
     }
 
     res = requests.post(url, headers=headers, data=data)
 
     print("TOKEN STATUS:", res.status_code)
-    print("TOKEN RESPONSE:", res.text)
 
     try:
-        return res.json()["access_token"]
+        data = res.json()
+        return data["access_token"]
     except Exception:
-        raise Exception("Token request failed")
+        print("TOKEN RAW RESPONSE:", res.text)
+        raise Exception("Failed to get eBay token")
 
 
 # ---------------------------
-# SHEET LOGGING
+# GOOGLE SHEETS
 # ---------------------------
-def log_to_sheet(sheet, item, niche, price, sold, profit, profit_pct, decision, url):
-    sheet.append_row([
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        item,
-        niche,
-        price,
-        sold,
-        profit,
-        profit_pct,
-        decision,
-        url
-    ])
-
-
 def connect_sheet():
+    creds_json = os.getenv("GOOGLE_CREDS_JSON")
+    if not creds_json:
+        raise Exception("Missing GOOGLE_CREDS_JSON")
+
+    creds_dict = json.loads(creds_json)
+
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
 
-    creds_json = os.getenv("GOOGLE_CREDS_JSON")
-    creds_dict = json.loads(creds_json)
-
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
 
-    sheet = client.open("resale deal finder").sheet1
-    return sheet
+    return client.open("resale deal finder").sheet1
+
+
+def log_to_sheet(sheet, row):
+    sheet.append_row(row)
 
 
 # ---------------------------
-# SEARCH ITEMS
+# EBAY SEARCH
 # ---------------------------
 def get_items(token):
     queries = [
@@ -100,8 +97,7 @@ def get_items(token):
         url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
 
         headers = {
-            "Authorization": f"Bearer {token}",
-            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
+            "Authorization": f"Bearer {token}"
         }
 
         params = {
@@ -112,18 +108,21 @@ def get_items(token):
 
         res = requests.get(url, headers=headers, params=params)
 
-        print("SEARCH STATUS:", res.status_code)
-        print("RAW RESPONSE:", res.text[:150])
+        if res.status_code != 200:
+            print("eBay error:", q, res.status_code)
+            print(res.text[:200])
+            continue
 
         try:
             data = res.json()
-        except Exception as e:
-            print("JSON FAIL FOR:", q)
+        except Exception:
+            print("JSON parse fail:", q)
+            print(res.text[:200])
             continue
 
         all_items.extend(data.get("itemSummaries", []))
 
-    return {"itemSummaries": all_items}
+    return all_items
 
 
 # ---------------------------
@@ -147,16 +146,13 @@ def detect_niche(title):
 
 
 # ---------------------------
-# SOLD COMPS
+# COMP ESTIMATE (simple median fallback)
 # ---------------------------
-def get_sold_price_estimate(token, niche, keyword):
-    import statistics
-
+def estimate_price(token, keyword):
     url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
 
     headers = {
-        "Authorization": f"Bearer {token}",
-        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
+        "Authorization": f"Bearer {token}"
     }
 
     params = {
@@ -174,10 +170,8 @@ def get_sold_price_estimate(token, niche, keyword):
     prices = []
 
     for item in data.get("itemSummaries", []):
-        price = item.get("price", {}).get("value")
-
         try:
-            price = float(price)
+            price = float(item.get("price", {}).get("value", 0))
             if price > 0:
                 prices.append(price)
         except:
@@ -189,38 +183,30 @@ def get_sold_price_estimate(token, niche, keyword):
     prices.sort()
     trimmed = prices[1:-1]
 
-    if not trimmed:
-        return statistics.median(prices)
-
-    return statistics.median(trimmed)
+    return sum(trimmed) / len(trimmed) if trimmed else sum(prices) / len(prices)
 
 
 # ---------------------------
 # DEAL ENGINE
 # ---------------------------
-def evaluate_deal(price, sold_price):
-    try:
-        price = float(price)
-    except:
+def evaluate(price, comp):
+    if not comp:
         return None
 
-    if not sold_price:
-        return None
+    price = float(price)
 
-    fees = sold_price * 0.13
+    fees = comp * 0.13
     shipping = 10
 
-    net_profit = sold_price - price - fees - shipping
-    profit_pct = (net_profit / price) * 100 if price > 0 else 0
+    profit = comp - price - fees - shipping
+    profit_pct = (profit / price) * 100 if price > 0 else 0
 
-    if net_profit >= 20 and profit_pct >= 20:
-        label = "BUY"
-    elif net_profit >= 8:
-        label = "RISK"
+    if profit >= 20 and profit_pct >= 20:
+        return profit, profit_pct, "BUY"
+    elif profit >= 8:
+        return profit, profit_pct, "RISK"
     else:
-        label = "PASS"
-
-    return net_profit, profit_pct, label
+        return profit, profit_pct, "PASS"
 
 
 # ---------------------------
@@ -233,8 +219,7 @@ def run():
         token = get_token()
         sheet = connect_sheet()
 
-        data = get_items(token)
-        items = data.get("itemSummaries", [])
+        items = get_items(token)
 
         seen = set()
 
@@ -251,30 +236,34 @@ def run():
             seen.add(title)
 
             niche = detect_niche(title)
-            sold_price = get_sold_price_estimate(token, niche, title)
+            comp = estimate_price(token, title)
 
-            result = evaluate_deal(price, sold_price)
+            result = evaluate(price, comp)
             if not result:
                 continue
 
-            net_profit, profit_pct, decision = result
+            profit, profit_pct, decision = result
 
             if BUY_ONLY and decision != "BUY":
                 continue
 
-            log_to_sheet(
-                sheet,
+            row = [
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 title,
                 niche,
                 price,
-                sold_price,
-                net_profit,
+                comp,
+                profit,
                 profit_pct,
                 decision,
                 url
-            )
+            ]
 
-            print(title, decision, net_profit)
+            log_to_sheet(sheet, row)
+
+            print("ITEM:", title)
+            print("DECISION:", decision, "PROFIT:", profit)
+            print("--------------------")
 
     except Exception as e:
         print("ERROR:", e)
