@@ -2,7 +2,6 @@ import requests
 import base64
 import os
 import time
-import json
 from datetime import datetime
 
 
@@ -32,20 +31,13 @@ def get_token():
     }
 
     res = requests.post(url, headers=headers, data=data)
+    res.raise_for_status()
 
-    print("TOKEN STATUS:", res.status_code)
-
-    try:
-        token_data = res.json()
-    except Exception:
-        print("TOKEN RAW RESPONSE:", res.text)
-        raise
-
-    return token_data["access_token"]
+    return res.json()["access_token"]
 
 
 # ---------------------------
-# SEARCH QUERIES
+# SEARCH ITEMS
 # ---------------------------
 def get_items(token):
     queries = [
@@ -58,10 +50,7 @@ def get_items(token):
         "new balance 1906r",
         "asics gel 1130",
         "sp5der hoodie",
-        "denim tears hoodie",
-        "oakley sutro sunglasses",
-        "gymshark compression shirt",
-        "birkenstock stussy sandals"
+        "denim tears hoodie"
     ]
 
     all_items = []
@@ -81,20 +70,43 @@ def get_items(token):
 
         res = requests.get(url, headers=headers, params=params)
 
-        print(f"\nQUERY: {q}")
-        print("STATUS:", res.status_code)
-
-        # SAFE JSON HANDLING (prevents your crash)
         try:
             data = res.json()
-        except Exception:
-            print("RAW RESPONSE:", res.text[:300])
+        except:
+            print("Bad response for:", q)
             continue
 
-        items = data.get("itemSummaries", [])
-        all_items.extend(items)
+        all_items.extend(data.get("itemSummaries", []))
 
     return {"itemSummaries": all_items}
+
+
+# ---------------------------
+# DEAL ENGINE (PHASE 1)
+# ---------------------------
+def evaluate_deal(price):
+    try:
+        price = float(price)
+    except:
+        return None
+
+    # temporary resale estimate (we replace later with sold comps)
+    resale_estimate = price * 1.8
+
+    fees = resale_estimate * 0.13
+    shipping = 10
+
+    net_profit = resale_estimate - price - fees - shipping
+    profit_percent = (net_profit / price) * 100 if price > 0 else 0
+
+    if net_profit >= 25 and profit_percent > 25:
+        label = "BUY"
+    elif net_profit >= 10:
+        label = "RISK"
+    else:
+        label = "PASS"
+
+    return net_profit, profit_percent, label
 
 
 # ---------------------------
@@ -102,28 +114,41 @@ def get_items(token):
 # ---------------------------
 def run():
     try:
-        print("\n--- RUNNING SCAN ---")
+        print("\n--- SCANNING ---")
 
         token = get_token()
         data = get_items(token)
 
         items = data.get("itemSummaries", [])
 
-        print("\nTOTAL ITEMS:", len(items))
+        print("TOTAL ITEMS:", len(items))
 
         for item in items:
             title = item.get("title")
             price = item.get("price", {}).get("value")
             url = item.get("itemWebUrl")
 
-            print(title, "-", price)
+            result = evaluate_deal(price)
+
+            if not result:
+                continue
+
+            net_profit, profit_percent, label = result
+
+            print("\n--------------------")
+            print("ITEM:", title)
+            print("PRICE:", price)
+            print("PROFIT:", round(net_profit, 2))
+            print("PROFIT %:", round(profit_percent, 2))
+            print("DECISION:", label)
+            print(url)
 
     except Exception as e:
         print("ERROR:", e)
 
 
 # ---------------------------
-# LOOP
+# LOOP (Railway runtime)
 # ---------------------------
 while True:
     run()
