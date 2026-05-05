@@ -161,15 +161,15 @@ def evaluate_deal(price, sold_price):
     net_profit = resale_estimate - price - fees - shipping
     profit_percent = (net_profit / price) * 100 if price > 0 else 0
 
-    if net_profit >= 30 and profit_percent > 25:
+    # 🧠 stricter thresholds (reduces false BUYs)
+    if net_profit >= 20 and profit_percent >= 20:
         label = "BUY"
-    elif net_profit >= 10:
+    elif net_profit >= 8:
         label = "RISK"
     else:
         label = "PASS"
 
     return net_profit, profit_percent, label
-
 
 # ---------------------------
 # MAIN LOOP
