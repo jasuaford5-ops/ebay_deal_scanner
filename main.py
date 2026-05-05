@@ -2,7 +2,12 @@ import requests
 import base64
 import os
 import time
+import json
 from datetime import datetime
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+
+BUY_ONLY = True
 
 
 # ---------------------------
@@ -11,9 +16,6 @@ from datetime import datetime
 def get_token():
     client_id = os.getenv("EBAY_CLIENT_ID")
     client_secret = os.getenv("EBAY_CLIENT_SECRET")
-
-    if not client_id or not client_secret:
-        raise Exception("Missing eBay credentials")
 
     creds = f"{client_id}:{client_secret}"
     encoded = base64.b64encode(creds.encode()).decode()
@@ -34,6 +36,41 @@ def get_token():
     res.raise_for_status()
 
     return res.json()["access_token"]
+
+
+# ---------------------------
+# SHEET LOGGING
+# ---------------------------
+def log_to_sheet(sheet, item, niche, price, sold, profit, profit_pct, decision, url):
+    sheet.append_row([
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        item,
+        niche,
+        price,
+        sold,
+        profit,
+        profit_pct,
+        decision,
+        url
+    ])
+
+
+def connect_sheet():
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+
+    creds_json = os.getenv("GOOGLE_CREDS_JSON")
+    creds_dict = json.loads(creds_json)
+
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+
+    # ✅ FIXED: must be a string
+    sheet = client.open("resale deal finder").sheet1
+    return sheet
 
 
 # ---------------------------
@@ -80,6 +117,10 @@ def get_items(token):
 
     return {"itemSummaries": all_items}
 
+
+# ---------------------------
+# NICHE DETECTION
+# ---------------------------
 def detect_niche(title):
     title = title.lower()
 
@@ -96,6 +137,10 @@ def detect_niche(title):
 
     return "general"
 
+
+# ---------------------------
+# SOLD COMPS
+# ---------------------------
 def get_sold_price_estimate(token, niche, keyword):
     import statistics
 
@@ -133,16 +178,17 @@ def get_sold_price_estimate(token, niche, keyword):
     if len(prices) < 3:
         return None
 
-    # 🧠 remove outliers (important)
     prices.sort()
-    trimmed = prices[1:-1]  # removes lowest + highest
+    trimmed = prices[1:-1]
 
     if not trimmed:
         return statistics.median(prices)
 
     return statistics.median(trimmed)
+
+
 # ---------------------------
-# DEAL ENGINE (PHASE 1)
+# DEAL ENGINE
 # ---------------------------
 def evaluate_deal(price, sold_price):
     try:
@@ -161,7 +207,6 @@ def evaluate_deal(price, sold_price):
     net_profit = resale_estimate - price - fees - shipping
     profit_percent = (net_profit / price) * 100 if price > 0 else 0
 
-    # 🧠 stricter thresholds (reduces false BUYs)
     if net_profit >= 20 and profit_percent >= 20:
         label = "BUY"
     elif net_profit >= 8:
@@ -171,6 +216,7 @@ def evaluate_deal(price, sold_price):
 
     return net_profit, profit_percent, label
 
+
 # ---------------------------
 # MAIN LOOP
 # ---------------------------
@@ -179,8 +225,9 @@ def run():
         print("\n--- SCANNING ---")
 
         token = get_token()
-        data = get_items(token)
+        sheet = connect_sheet()
 
+        data = get_items(token)
         items = data.get("itemSummaries", [])
 
         seen = set()
@@ -193,7 +240,6 @@ def run():
             if not title or not price:
                 continue
 
-            # prevent duplicate spam
             if title in seen:
                 continue
             seen.add(title)
@@ -202,28 +248,35 @@ def run():
             sold_price = get_sold_price_estimate(token, niche, title)
 
             result = evaluate_deal(price, sold_price)
-
             if not result:
                 continue
 
-            net_profit, profit_percent, label = result
+            net_profit, profit_pct, decision = result
 
-            print("\n--------------------")
-            print("ITEM:", title)
-            print("NICHE:", niche)
-            print("BUY PRICE:", price)
-            print("SOLD AVG:", round(sold_price, 2) if sold_price else None)
-            print("NET PROFIT:", round(net_profit, 2))
-            print("PROFIT %:", round(profit_percent, 2))
-            print("DECISION:", label)
-            print("LINK:", url)
+            # ✅ BUY ONLY FILTER
+            if BUY_ONLY and decision != "BUY":
+                continue
+
+            log_to_sheet(
+                sheet,
+                title,
+                niche,
+                price,
+                sold_price,
+                net_profit,
+                profit_pct,
+                decision,
+                url
+            )
+
+            print(title, decision, net_profit)
 
     except Exception as e:
         print("ERROR:", e)
 
 
 # ---------------------------
-# LOOP (Railway runtime)
+# LOOP
 # ---------------------------
 while True:
     run()
