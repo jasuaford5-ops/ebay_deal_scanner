@@ -43,21 +43,44 @@ def get_token():
 # EBAY SEARCH
 # ---------------------------
 def get_items(token):
-    url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
+    queries = [
+        "nike tech fleece hoodie",
+        "carhartt jacket active",
+        "stussy tee vintage",
+        "arcteryx atom lt jacket",
+        "north face nuptse 700",
+        "adidas samba og",
+        "new balance 1906r",
+        "asics gel 1130",
+        "sp5der hoodie",
+        "denim tears hoodie",
+        "oakley sunglasses sutro",
+        "gymshark compression shirt",
+        "birkensock stussy sandals"
+    ]
 
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
+    all_items = []
 
-    params = {
-        "q": "nike hoodie",
-        "limit": 10
-    }
+    for q in queries:
+        url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
 
-    res = requests.get(url, headers=headers, params=params)
-    res.raise_for_status()
+        headers = {
+            "Authorization": f"Bearer {token}"
+        }
 
-    return res.json()
+        params = {
+            "q": q,
+            "limit": 5,
+            "sort": "newlyListed"
+        }
+
+        res = requests.get(url, headers=headers, params=params)
+        res.raise_for_status()
+
+        data = res.json()
+        all_items.extend(data.get("itemSummaries", []))
+
+    return {"itemSummaries": all_items}
 
 
 # ---------------------------
