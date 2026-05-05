@@ -35,12 +35,13 @@ def get_token():
     res = requests.post(url, headers=headers, data=data)
 
     print("TOKEN STATUS:", res.status_code)
-    print("TOKEN RESPONSE:", res.text)   # 🔥 THIS is key
+    print("TOKEN RESPONSE:", res.text)
 
     try:
         return res.json()["access_token"]
     except Exception:
-        raise Exception("Token request failed (see response above)")
+        raise Exception("Token request failed")
+
 
 # ---------------------------
 # SHEET LOGGING
@@ -72,7 +73,6 @@ def connect_sheet():
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
 
-    # ✅ FIXED: must be a string
     sheet = client.open("resale deal finder").sheet1
     return sheet
 
@@ -100,7 +100,8 @@ def get_items(token):
         url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
 
         headers = {
-            "Authorization": f"Bearer {token}"
+            "Authorization": f"Bearer {token}",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
         }
 
         params = {
@@ -111,15 +112,19 @@ def get_items(token):
 
         res = requests.get(url, headers=headers, params=params)
 
+        print("SEARCH STATUS:", res.status_code)
+        print("RAW RESPONSE:", res.text[:150])
+
         try:
             data = res.json()
-        except:
-            print("Bad response for:", q)
+        except Exception as e:
+            print("JSON FAIL FOR:", q)
             continue
 
         all_items.extend(data.get("itemSummaries", []))
 
     return {"itemSummaries": all_items}
+
 
 # ---------------------------
 # NICHE DETECTION
@@ -150,13 +155,13 @@ def get_sold_price_estimate(token, niche, keyword):
     url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
 
     headers = {
-        "Authorization": f"Bearer {token}"
+        "Authorization": f"Bearer {token}",
+        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
     }
 
     params = {
         "q": keyword,
-        "limit": 20,
-        "filter": "buyingOptions:{FIXED_PRICE}"
+        "limit": 20
     }
 
     res = requests.get(url, headers=headers, params=params)
@@ -202,22 +207,20 @@ def evaluate_deal(price, sold_price):
     if not sold_price:
         return None
 
-    resale_estimate = sold_price
-
-    fees = resale_estimate * 0.13
+    fees = sold_price * 0.13
     shipping = 10
 
-    net_profit = resale_estimate - price - fees - shipping
-    profit_percent = (net_profit / price) * 100 if price > 0 else 0
+    net_profit = sold_price - price - fees - shipping
+    profit_pct = (net_profit / price) * 100 if price > 0 else 0
 
-    if net_profit >= 20 and profit_percent >= 20:
+    if net_profit >= 20 and profit_pct >= 20:
         label = "BUY"
     elif net_profit >= 8:
         label = "RISK"
     else:
         label = "PASS"
 
-    return net_profit, profit_percent, label
+    return net_profit, profit_pct, label
 
 
 # ---------------------------
@@ -256,7 +259,6 @@ def run():
 
             net_profit, profit_pct, decision = result
 
-            # ✅ BUY ONLY FILTER
             if BUY_ONLY and decision != "BUY":
                 continue
 
