@@ -19,7 +19,7 @@ def get_token():
     client_secret = os.getenv("EBAY_CLIENT_SECRET")
 
     if not client_id or not client_secret:
-        raise Exception("Missing EBAY credentials")
+        raise Exception("Missing eBay credentials")
 
     creds = f"{client_id}:{client_secret}"
     encoded = base64.b64encode(creds.encode()).decode()
@@ -39,14 +39,17 @@ def get_token():
     res = requests.post(url, headers=headers, data=data)
 
     print("TOKEN STATUS:", res.status_code)
+    print("TOKEN RAW:", res.text)
+
+    # 🧠 SAFETY CHECK (IMPORTANT)
+    if res.status_code != 200:
+        raise Exception("Token failed")
 
     try:
-        data = res.json()
-        return data["access_token"]
+        return res.json().get("access_token")
     except Exception:
-        print("TOKEN RAW RESPONSE:", res.text)
-        raise Exception("Failed to get eBay token")
-
+        print("❌ BAD JSON RESPONSE:", res.text)
+        raise
 
 # ---------------------------
 # GOOGLE SHEETS
